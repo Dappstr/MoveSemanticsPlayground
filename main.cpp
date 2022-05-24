@@ -109,10 +109,7 @@ public:
 
 	B& operator=(const B& num) noexcept
 	{
-		if (&num == this)
-		{
-			return *this;
-		}
+		if (&num == this) return *this;
 
 		std::cout << "Copy Operator\n";
 		a = num.a;
@@ -121,10 +118,7 @@ public:
 
 	B& operator=(B&& num) noexcept
 	{
-		if (&num == this)
-		{
-			return *this;
-		}
+		if (&num == this) return *this;
 
 		std::cout << "Move Operator\n";
 		a = std::move(num.a);
@@ -168,9 +162,7 @@ int main()
 	}
 
 	for (auto& i : names)
-	{
-		std::cout << i << '\n';
-	}
+	{ std::cout << i << '\n'; }
 }
 
 //Unused at the moment.
