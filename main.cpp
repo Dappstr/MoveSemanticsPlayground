@@ -144,7 +144,7 @@ int main()
 		B bObj(1);
 
 		//Lifetime about to end, passed by value, so it WILL be moved since makeB creates/copies a value.
-		bObj = makeB(std::move(bObj));
+		bTwo = makeB(std::move(bObj));
 	}
 
 	std::vector<std::string> names{};
