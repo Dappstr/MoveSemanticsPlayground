@@ -3,9 +3,36 @@
 #include <string>
 #include <vector>
 #include <fstream>
+#include <algorithm>
+#include <cstring>
+#include <thread>
+#include <array>
+#include <chrono>
+#include <exception>
+#include <type_traits>
 
-template <typename T>
-[[maybe_unused]] void mutate(T&&) noexcept;
+namespace
+{
+	template <typename T, typename = std::is_nothrow_convertible<T, char*>>
+	[[maybe_unused]] void mutate(T&& arg) noexcept
+	{
+		std::string someStr{ std::move(arg) };
+	}
+
+	namespace move_constructible_wrapper
+	{
+		//is_nothrow_movable wrapper for abstract classes
+		template <typename AbstractClass>
+		struct Wrapper : AbstractClass
+		{
+			using AbstractClass::AbstractClass;
+			//...
+		};
+
+		template <typename T>
+		static constexpr inline bool is_nothrow_movable_v = std::is_nothrow_move_constructible_v<Wrapper<T>> ;
+	}
+}
 
 class String
 {
@@ -31,7 +58,7 @@ public:
 		memcpy(m_str, src.m_str, m_length + 1);
 	}
 
-	String(String&& str) noexcept(noexcept(m_length > 0))
+	String(String&& str) noexcept(noexcept(m_length > 0) && std::is_nothrow_constructible_v<String>)
 		:m_length(std::move(str.m_length)), m_str(std::move(str.m_str))
 	{
 		std::cout << "Calling move constructor\n";
@@ -77,7 +104,7 @@ public:
 	{}
 
 	template <typename T>
-	T& operator=(T&& a) noexcept(noexcept(a.str.size() > 0))
+	T& operator=(T&& a) noexcept(noexcept(a.str.size() > 0) && std::is_nothrow_constructible_v<T>)
 	{
 		str = std::move(a.str);
 		return *this;
@@ -124,6 +151,8 @@ public:
 		a = std::move(num.a);
 		return *this;
 	}
+
+	~B() = default;
 };
 
 B makeB(B b)
@@ -137,14 +166,122 @@ B makeB(B b)
 	return newB;
 }
 
+class Abstract
+{
+private:
+	size_t num{};
+
+public:
+	virtual void func() = 0; //Pure virtual function example
+	virtual ~Abstract() = default;
+
+protected:
+
+	//Allow copy/move construction
+	Abstract(const Abstract&) = default;
+	Abstract(Abstract&&) = default;
+
+	//Disallow copy/move assignment because of object slicing
+	Abstract& operator=(const Abstract&) = delete;
+	Abstract& operator=(Abstract&&) = delete;
+
+};
+
+//Reference qualifiers
+class RefQual
+{
+private:
+	std::string m_name{};
+
+public:
+	RefQual(std::string&& name)
+		:m_name(std::move(name))
+	{}
+
+	std::string getByVal() && //Will handle temporaries
+	{
+		return std::move(m_name); //Normally returning with an std::move() is bad since it'll stop any attempt at RVO/NRVO, however, in this case, we're not returning a local variable, we're returning a member. So It's perfectly fine.
+	}
+
+	const std::string& getByRef() const& //Will handle objects that are not moved
+	{
+		return m_name;
+	}
+
+	friend std::ostream& operator<<(std::ostream& out, const RefQual& instance)
+	{
+		out << instance.m_name;
+		return out;
+	}
+};
+
+RefQual getName()
+{
+	RefQual nm { "Super Long String To Avoid SSO" };
+	return nm;
+}
+
+class Tasks
+{
+private:
+
+	//std::jthread has better RAII principle and will automatically join rather than relying on std::thread using join() before the destructor is called.
+	std::array<std::thread, 10> m_threadTasks{};
+	size_t m_numThreads{ 0 };
+
+public:
+
+	Tasks() = default;
+	Tasks(Tasks&&) = default;
+	Tasks& operator=(Tasks&&) = default;
+
+	template <typename T>
+	void startTask(T op)
+	{
+		m_threadTasks[m_numThreads] = std::thread{ std::move(op) };
+		++m_numThreads;
+	}
+
+	~Tasks()
+	{
+		for (size_t i = 0; i < m_numThreads; ++i)
+		{
+			if (m_threadTasks[i].joinable())
+				m_threadTasks[i].join();
+			else
+				std::cout << "Fatal error! Cannot join thread!\n" ;
+		}
+	}
+};
+
 int main()
 {
+	std::vector<std::string> refs{};
+	RefQual obj{ "Testeringtestingtesterthatistesting" };
+	refs.push_back(obj.getByRef()); // const &
+	//Or even
+	refs.push_back(std::move(obj).getByVal()); // &&
+
+	for (auto c : getName().getByVal()) //Will prefer rvalue reference since a temporary is being used
+	{
+		if (c == ' ')
+			std::cout << "Space";
+		else
+			std::cout << c;
+	}
+	std::cout << '\n';
+
+	for (const auto& i : refs) //Will prefer const lvalue reference for object
+	{
+		std::cout << i << '\n';
+	}
+
 	B bTwo;
 	{
 		B bObj(1);
 
 		//Lifetime about to end, passed by value, so it WILL be moved since makeB creates/copies a value.
-		bTwo = makeB(std::move(bObj));
+		bObj = makeB(std::move(bObj));
 	}
 
 	std::vector<std::string> names{};
@@ -163,11 +300,24 @@ int main()
 
 	for (auto& i : names)
 	{ std::cout << i << '\n'; }
-}
 
-//Unused at the moment.
-template <typename T, typename = std::is_nothrow_convertible<T, char*>>
-void mutate(T&& arg) noexcept
-{
-	std::string someStr{ std::move(arg) };
+	try
+	{
+		Tasks task{};
+		task.startTask(
+			[] {
+				std::this_thread::sleep_for(std::chrono::seconds{ 2 });
+				std::cout << "\nThread: " << std::this_thread::get_id() << " done\n";
+			});
+
+		task.startTask(
+			[] {
+				std::cout << "\nThread: " << std::this_thread::get_id() << " done\n";
+			});
+
+		Tasks other{ std::move(task) };
+
+	}
+	catch (const std::exception& e) { std::cout << "CAUGHT EXCEPTION: " << e.what() << '\n'; }
+
 }
