@@ -349,6 +349,24 @@ void passForward(T&& arg)
 int main()
 {
 	{
+		auto perfReturnLambda = [](auto f, auto&&... args) -> decltype(auto)
+		{
+			decltype(auto ret) = f(std::forward<decltype(args)>(args)...);
+			
+			//...
+
+			if constexpr (std::is_rvalue_reference_v<decltype(args))
+			{
+				return std::move(ret);
+			}
+			else
+			{
+				return ret;
+			}
+		};
+	}
+
+	{
 		int x{};
 		const int y{};
 
