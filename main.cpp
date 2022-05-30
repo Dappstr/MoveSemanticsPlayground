@@ -10,6 +10,7 @@
 #include <chrono>
 #include <exception>
 #include <type_traits>
+#include <map>
 
 namespace
 {
@@ -17,6 +18,18 @@ namespace
 	[[maybe_unused]] void mutate(T&& arg) noexcept
 	{
 		std::string someStr{ std::move(arg) };
+	}
+
+	void checkValueCategory(auto expression)
+	{
+		if (!std::is_reference_v<decltype(expression)>)
+			std::cout << "prvalue\n";
+		else if (std::is_lvalue_reference_v<decltype(expression)>)
+			std::cout << "lvalue\n";
+		else if (std::is_rvalue_reference_v<decltype(expression)>)
+			std::cout << "xvalue\n";
+		else if (!std::is_lvalue_reference_v<decltype(expression)>)
+			std::cout << "rvalue\n";
 	}
 
 	namespace move_constructible_wrapper
@@ -254,8 +267,121 @@ public:
 	}
 };
 
+struct S
+{
+
+	//std::move() copies or moves static or reference members depending on how the object/member is passed.
+	inline static std::string m_statStr;
+	std::string& m_str = m_statStr;
+};
+
+struct Foo
+{
+	Foo() = default;
+	
+	Foo(int i, bool b)
+		:m_i(i), m_b(b)
+	{}
+		
+	Foo(int i, bool b, float f)
+		:m_i(i), m_b(b), m_f(f)
+	{}
+
+	Foo(int i, bool b, float f, const std::vector<int>& v)
+		:m_i(i), m_b(b), m_f(f), m_v(v)
+	{}
+
+	Foo(int i, bool b, float f, std::vector<int>&& v)
+		:m_i(i), m_b(b), m_f(f), m_v(std::move(v))
+	{}
+
+private:
+	int m_i					{};
+	bool m_b				{};
+	float m_f				{};
+	std::vector<int> m_v	{};
+};
+
+struct FrwdMe
+{
+	template <typename... Args>
+	void addFoo(Args... args)
+	{
+		v.emplace_back(std::forward<Args>(args)...); //std::forward will ensure that our arguments keep their value categories so that we may pass in both lvalues and rvalues.
+	}
+
+private:
+	std::vector<Foo> v{};
+};
+
+
+template <typename T>
+auto make_pair(T&& t)
+{
+	return std::make_tuple(std::forward<T>(t), std::forward<T>(t)); // BAD
+}
+
+template <typename T>
+auto processValue(T& arg)
+{
+	std::cout << "Non const reference\n";
+}
+
+template <typename T>
+auto processValue(const T& arg)
+{
+	std::cout << "Const reference\n";
+}
+
+template <typename T>
+auto processValue(T&& arg)
+{
+	std::cout << "Forwarding reference\n";
+}
+
+
+template <typename T>
+void passForward(T&& arg)
+{
+	processValue(std::forward<T>(arg));
+}
+
 int main()
 {
+	{
+		int x{};
+		const int y{};
+
+		passForward(x);
+		passForward(y);
+		passForward(Foo());
+		passForward(std::move(x));
+		passForward(std::move(y));
+
+	}
+
+	int x{4};
+	std::tuple<int, int> tp{make_pair(std::move(x))};
+
+	std::cout << std::get<0>(tp) << std::get<1>(tp) << '\n';
+	
+	FrwdMe f;
+	std::vector<int> v{ 2, 4, 6, 8 ,10 };
+	
+	f.addFoo(1, true, 3.1415, std::move(v));
+	f.addFoo(Foo(2, true, 5.5457123));
+	f.addFoo(std::move(Foo(3, false, 7.235431)));
+
+	S sObject;
+
+	std::vector<std::string> Ss{};
+
+	Ss.push_back(std::move(sObject).m_str); //Copies
+	Ss.push_back(std::move(sObject).m_statStr); //Copies
+
+	Ss.push_back(std::move(sObject.m_str)); //Moves
+	Ss.push_back(std::move(sObject.m_statStr)); //Moves
+
 	std::vector<std::string> refs{};
 	RefQual obj{ "Testeringtestingtesterthatistesting" };
 	refs.push_back(obj.getByRef()); // const &
